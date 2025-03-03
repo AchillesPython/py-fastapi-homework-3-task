@@ -60,9 +60,16 @@ class MovieDetailSchema(MovieSchema):
     updated_at: datetime
 
 
+class MovieListItemSchema(BaseModel):
+    id: int
+    title: str
+    release_date: date
+    rating: float
+
+
 class MovieListResponseSchema(BaseModel):
     total: int
-    movies: List[MovieSchema]
+    movies: List[MovieListItemSchema]
 
 
 class CreateMovieSchema(BaseModel):
