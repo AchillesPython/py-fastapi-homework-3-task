@@ -3,11 +3,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from datetime import datetime, timezone
 
-from database import get_db, UserModel, UserGroupModel, UserGroupEnum, ActivationTokenModel, PasswordResetTokenModel, RefreshTokenModel
+from database import (
+    get_db,
+    UserModel,
+    UserGroupModel,
+    UserGroupEnum,
+    ActivationTokenModel,
+    PasswordResetTokenModel,
+    RefreshTokenModel
+)
 from security.token_manager import create_access_token, create_refresh_token
 from schemas.accounts import (
-    RegisterUserSchema, ActivateUserSchema, PasswordResetRequestSchema,
-    PasswordResetCompleteSchema, LoginSchema, TokenResponseSchema, RefreshTokenSchema
+    RegisterUserSchema,
+    ActivateUserSchema,
+    PasswordResetRequestSchema,
+    PasswordResetCompleteSchema,
+    LoginSchema,
+    TokenResponseSchema,
+    RefreshTokenSchema
 )
 
 router = APIRouter()
