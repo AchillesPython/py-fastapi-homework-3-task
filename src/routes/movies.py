@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import Session, joinedload
 
-from database import get_db, MovieModel
 from database import (
+    get_db,
+    MovieModel,
     CountryModel,
     GenreModel,
     ActorModel,
@@ -14,9 +13,10 @@ from database import (
 from schemas import (
     MovieListResponseSchema,
     MovieListItemSchema,
-    MovieDetailSchema
+    MovieDetailSchema,
+    MovieCreateSchema,
+    MovieUpdateSchema
 )
-from schemas.movies import MovieCreateSchema, MovieUpdateSchema
 
 router = APIRouter()
 
@@ -42,13 +42,13 @@ router = APIRouter()
         }
     }
 )
-async def get_movie_list(
+def get_movie_list(
         page: int = Query(1, ge=1, description="Page number (1-based index)"),
         per_page: int = Query(10, ge=1, le=20, description="Number of items per page"),
-        db: AsyncSession = Depends(get_db),
+        db: Session = Depends(get_db),
 ) -> MovieListResponseSchema:
     """
-    Fetch a paginated list of movies from the database (asynchronously).
+    Fetch a paginated list of movies from the database.
 
     This function retrieves a paginated list of movies, allowing the client to specify
     the page number and the number of items per page. It calculates the total pages
@@ -58,8 +58,8 @@ async def get_movie_list(
     :type page: int
     :param per_page: The number of items to display per page (must be between 1 and 20).
     :type per_page: int
-    :param db: The async SQLAlchemy database session (provided via dependency injection).
-    :type db: AsyncSession
+    :param db: The SQLAlchemy database session (provided via dependency injection).
+    :type db: Session
 
     :return: A response containing the paginated list of movies and metadata.
     :rtype: MovieListResponseSchema
@@ -68,27 +68,22 @@ async def get_movie_list(
     """
     offset = (page - 1) * per_page
 
-    count_stmt = select(func.count(MovieModel.id))
-    result_count = await db.execute(count_stmt)
-    total_items = result_count.scalar() or 0
-
-    if not total_items:
-        raise HTTPException(status_code=404, detail="No movies found.")
+    query = db.query(MovieModel).order_by()
 
     order_by = MovieModel.default_order_by()
-    stmt = select(MovieModel)
     if order_by:
-        stmt = stmt.order_by(*order_by)
+        query = query.order_by(*order_by)
 
-    stmt = stmt.offset(offset).limit(per_page)
-
-    result_movies = await db.execute(stmt)
-    movies = result_movies.scalars().all()
+    total_items = query.count()
+    movies = query.offset(offset).limit(per_page).all()
 
     if not movies:
         raise HTTPException(status_code=404, detail="No movies found.")
 
-    movie_list = [MovieListItemSchema.model_validate(movie) for movie in movies]
+    movie_list = [
+        MovieListItemSchema.model_validate(movie)
+        for movie in movies
+    ]
 
     total_pages = (total_items + per_page - 1) // per_page
 
@@ -127,9 +122,9 @@ async def get_movie_list(
     },
     status_code=201
 )
-async def create_movie(
+def create_movie(
         movie_data: MovieCreateSchema,
-        db: AsyncSession = Depends(get_db)
+        db: Session = Depends(get_db)
 ) -> MovieDetailSchema:
     """
     Add a new movie to the database.
@@ -140,75 +135,57 @@ async def create_movie(
 
     :param movie_data: The data required to create a new movie.
     :type movie_data: MovieCreateSchema
-    :param db: The SQLAlchemy async database session (provided via dependency injection).
-    :type db: AsyncSession
+    :param db: The SQLAlchemy database session (provided via dependency injection).
+    :type db: Session
 
     :return: The created movie with all details.
     :rtype: MovieDetailSchema
 
-    :raises HTTPException:
-        - 409 if a movie with the same name and date already exists.
-        - 400 if input data is invalid (e.g., violating a constraint).
+    :raises HTTPException: Raises a 400 error for invalid input.
     """
-    existing_stmt = select(MovieModel).where(
-        (MovieModel.name == movie_data.name),
-        (MovieModel.date == movie_data.date)
-    )
-    existing_result = await db.execute(existing_stmt)
-    existing_movie = existing_result.scalars().first()
+    existing_movie = db.query(MovieModel).filter(
+        MovieModel.name == movie_data.name,
+        MovieModel.date == movie_data.date
+    ).first()
 
     if existing_movie:
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"A movie with the name '{movie_data.name}' and release date "
-                f"'{movie_data.date}' already exists."
-            )
+            detail=f"A movie with the name '{movie_data.name}' and release date '{movie_data.date}' already exists."
         )
 
     try:
-        country_stmt = select(CountryModel).where(CountryModel.code == movie_data.country)
-        country_result = await db.execute(country_stmt)
-        country = country_result.scalars().first()
+        country = db.query(CountryModel).filter_by(code=movie_data.country).first()
         if not country:
             country = CountryModel(code=movie_data.country)
             db.add(country)
-            await db.flush()
+            db.flush()
 
         genres = []
         for genre_name in movie_data.genres:
-            genre_stmt = select(GenreModel).where(GenreModel.name == genre_name)
-            genre_result = await db.execute(genre_stmt)
-            genre = genre_result.scalars().first()
-
+            genre = db.query(GenreModel).filter_by(name=genre_name).first()
             if not genre:
                 genre = GenreModel(name=genre_name)
                 db.add(genre)
-                await db.flush()
+                db.flush()
             genres.append(genre)
 
         actors = []
         for actor_name in movie_data.actors:
-            actor_stmt = select(ActorModel).where(ActorModel.name == actor_name)
-            actor_result = await db.execute(actor_stmt)
-            actor = actor_result.scalars().first()
-
+            actor = db.query(ActorModel).filter_by(name=actor_name).first()
             if not actor:
                 actor = ActorModel(name=actor_name)
                 db.add(actor)
-                await db.flush()
+                db.flush()
             actors.append(actor)
 
         languages = []
         for language_name in movie_data.languages:
-            lang_stmt = select(LanguageModel).where(LanguageModel.name == language_name)
-            lang_result = await db.execute(lang_stmt)
-            language = lang_result.scalars().first()
-
+            language = db.query(LanguageModel).filter_by(name=language_name).first()
             if not language:
                 language = LanguageModel(name=language_name)
                 db.add(language)
-                await db.flush()
+                db.flush()
             languages.append(language)
 
         movie = MovieModel(
@@ -225,13 +202,12 @@ async def create_movie(
             languages=languages,
         )
         db.add(movie)
-        await db.commit()
-        await db.refresh(movie, ["genres", "actors", "languages"])
+        db.commit()
+        db.refresh(movie)
 
         return MovieDetailSchema.model_validate(movie)
-
     except IntegrityError:
-        await db.rollback()
+        db.rollback()
         raise HTTPException(status_code=400, detail="Invalid input data.")
 
 
@@ -256,9 +232,9 @@ async def create_movie(
         }
     }
 )
-async def get_movie_by_id(
+def get_movie_by_id(
         movie_id: int,
-        db: AsyncSession = Depends(get_db),
+        db: Session = Depends(get_db),
 ) -> MovieDetailSchema:
     """
     Retrieve detailed information about a specific movie by its ID.
@@ -269,26 +245,24 @@ async def get_movie_by_id(
     :param movie_id: The unique identifier of the movie to retrieve.
     :type movie_id: int
     :param db: The SQLAlchemy database session (provided via dependency injection).
-    :type db: AsyncSession
+    :type db: Session
 
     :return: The details of the requested movie.
     :rtype: MovieDetailResponseSchema
 
     :raises HTTPException: Raises a 404 error if the movie with the given ID is not found.
     """
-    stmt = (
-        select(MovieModel)
+    movie = (
+        db.query(MovieModel)
         .options(
             joinedload(MovieModel.country),
             joinedload(MovieModel.genres),
             joinedload(MovieModel.actors),
             joinedload(MovieModel.languages),
         )
-        .where(MovieModel.id == movie_id)
+        .filter(MovieModel.id == movie_id)
+        .first()
     )
-
-    result = await db.execute(stmt)
-    movie = result.scalars().first()
 
     if not movie:
         raise HTTPException(
@@ -303,9 +277,9 @@ async def get_movie_by_id(
     "/movies/{movie_id}/",
     summary="Delete a movie by ID",
     description=(
-            "<h3>Delete a specific movie from the database by its unique ID.</h3>"
-            "<p>If the movie exists, it will be deleted. If it does not exist, "
-            "a 404 error will be returned.</p>"
+        "<h3>Delete a specific movie from the database by its unique ID.</h3>"
+        "<p>If the movie exists, it will be deleted. If it does not exist, "
+        "a 404 error will be returned.</p>"
     ),
     responses={
         204: {
@@ -322,9 +296,9 @@ async def get_movie_by_id(
     },
     status_code=204
 )
-async def delete_movie(
-        movie_id: int,
-        db: AsyncSession = Depends(get_db),
+def delete_movie(
+    movie_id: int,
+    db: Session = Depends(get_db),
 ):
     """
     Delete a specific movie by its ID.
@@ -335,16 +309,14 @@ async def delete_movie(
     :param movie_id: The unique identifier of the movie to delete.
     :type movie_id: int
     :param db: The SQLAlchemy database session (provided via dependency injection).
-    :type db: AsyncSession
+    :type db: Session
 
     :raises HTTPException: Raises a 404 error if the movie with the given ID is not found.
 
     :return: A response indicating the successful deletion of the movie.
     :rtype: None
     """
-    stmt = select(MovieModel).where(MovieModel.id == movie_id)
-    result = await db.execute(stmt)
-    movie = result.scalars().first()
+    movie = db.query(MovieModel).filter(MovieModel.id == movie_id).first()
 
     if not movie:
         raise HTTPException(
@@ -352,9 +324,8 @@ async def delete_movie(
             detail="Movie with the given ID was not found."
         )
 
-    await db.delete(movie)
-    await db.commit()
-
+    db.delete(movie)
+    db.commit()
     return {"detail": "Movie deleted successfully."}
 
 
@@ -362,9 +333,9 @@ async def delete_movie(
     "/movies/{movie_id}/",
     summary="Update a movie by ID",
     description=(
-            "<h3>Update details of a specific movie by its unique ID.</h3>"
-            "<p>This endpoint updates the details of an existing movie. If the movie with "
-            "the given ID does not exist, a 404 error is returned.</p>"
+        "<h3>Update details of a specific movie by its unique ID.</h3>"
+        "<p>This endpoint updates the details of an existing movie. If the movie with "
+        "the given ID does not exist, a 404 error is returned.</p>"
     ),
     responses={
         200: {
@@ -385,10 +356,10 @@ async def delete_movie(
         },
     }
 )
-async def update_movie(
-        movie_id: int,
-        movie_data: MovieUpdateSchema,
-        db: AsyncSession = Depends(get_db),
+def update_movie(
+    movie_id: int,
+    movie_data: MovieUpdateSchema,
+    db: Session = Depends(get_db),
 ):
     """
     Update a specific movie by its ID.
@@ -401,17 +372,14 @@ async def update_movie(
     :param movie_data: The updated data for the movie.
     :type movie_data: MovieUpdateSchema
     :param db: The SQLAlchemy database session (provided via dependency injection).
-    :type db: AsyncSession
+    :type db: Session
 
     :raises HTTPException: Raises a 404 error if the movie with the given ID is not found.
 
     :return: A response indicating the successful update of the movie.
     :rtype: None
     """
-    stmt = select(MovieModel).where(MovieModel.id == movie_id)
-    result = await db.execute(stmt)
-    movie = result.scalars().first()
-
+    movie = db.query(MovieModel).filter(MovieModel.id == movie_id).first()
     if not movie:
         raise HTTPException(
             status_code=404,
@@ -422,10 +390,11 @@ async def update_movie(
         setattr(movie, field, value)
 
     try:
-        await db.commit()
-        await db.refresh(movie)
+        db.commit()
+        db.refresh(movie)
     except IntegrityError:
-        await db.rollback()
+        db.rollback()
         raise HTTPException(status_code=400, detail="Invalid input data.")
 
-    return {"detail": "Movie updated successfully."}
+    else:
+        return {"detail": "Movie updated successfully."}
