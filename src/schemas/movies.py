@@ -66,6 +66,11 @@ class MovieSchema(BaseModel):
         from_attributes = True
 
 
+class MovieDetailSchema(MovieSchema):
+    created_at: datetime
+    updated_at: datetime
+
+
 class CreateMovieSchema(BaseModel):
     title: str
     description: str
