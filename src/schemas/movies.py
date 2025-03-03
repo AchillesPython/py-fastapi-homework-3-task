@@ -1,20 +1,9 @@
 from datetime import date, datetime
-from typing import Optional, List
+from typing import List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from database.models.movies import MovieStatusEnum
-from schemas.examples.movies import (
-    country_schema_example,
-    language_schema_example,
-    genre_schema_example,
-    actor_schema_example,
-    movie_item_schema_example,
-    movie_list_response_schema_example,
-    movie_create_schema_example,
-    movie_detail_schema_example,
-    movie_update_schema_example
-)
 
 
 class LanguageSchema(BaseModel):
@@ -69,6 +58,11 @@ class MovieSchema(BaseModel):
 class MovieDetailSchema(MovieSchema):
     created_at: datetime
     updated_at: datetime
+
+
+class MovieListResponseSchema(BaseModel):
+    total: int
+    movies: List[MovieSchema]
 
 
 class CreateMovieSchema(BaseModel):
